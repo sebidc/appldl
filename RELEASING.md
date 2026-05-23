@@ -1,49 +1,68 @@
 # Releasing `appldl`
 
-## 1. Create the GitHub repo
+## 1. Push the app repo
 
-- Recommended repo name: `appldl`
-- Push this project to GitHub
+App repo:
 
-## 2. Tag the first release
+```text
+https://github.com/sebidc/appldl
+```
+
+Push your code and make sure the default branch is `main`.
+
+## 2. Tag the release
 
 ```bash
 git tag v0.1.0
-git push origin master --tags
+git push origin v0.1.0
 ```
 
-## 3. Create a GitHub release
+## 3. Create the GitHub release
 
-- Create release `v0.1.0`
-- Use the source tarball URL:
+```bash
+gh release create v0.1.0 --title "v0.1.0" --notes "First release of appldl"
+```
+
+Release source tarball URL:
 
 ```text
-https://github.com/<owner>/appldl/archive/refs/tags/v0.1.0.tar.gz
+https://github.com/sebidc/appldl/archive/refs/tags/v0.1.0.tar.gz
 ```
 
 ## 4. Compute the tarball checksum
 
 ```bash
-curl -L https://github.com/<owner>/appldl/archive/refs/tags/v0.1.0.tar.gz -o appldl-v0.1.0.tar.gz
+curl -L https://github.com/sebidc/appldl/archive/refs/tags/v0.1.0.tar.gz -o appldl-v0.1.0.tar.gz
 shasum -a 256 appldl-v0.1.0.tar.gz
 ```
 
+Copy the first field from the `shasum` output and place it in `Formula/appldl.rb` as the `sha256` value.
+
 ## 5. Publish the Homebrew formula
 
-- Create a tap repo such as `homebrew-tools` or `homebrew-appldl`
-- Copy `Formula/appldl.rb` into that repo
-- Replace:
-  - `REPLACE_ME/appldl` with your GitHub owner/repo
-  - `sha256` with the real checksum
+Tap repo:
+
+```text
+https://github.com/sebidc/homebrew-tools
+```
+
+Homebrew tap name:
+
+```text
+sebidc/tools
+```
+
+Place the formula at:
+
+```text
+Formula/appldl.rb
+```
+
+Then commit and push it to the tap repo.
 
 ## 6. Install from the tap
 
 ```bash
-brew tap <owner>/<tap-repo>
+brew tap sebidc/tools
 brew install appldl
 ```
-
-## Suggested repos
-
-- App repo: `github.com/<owner>/appldl`
-- Brew tap: `github.com/<owner>/homebrew-tools`

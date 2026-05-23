@@ -1,6 +1,6 @@
 # appldl
 
-`appldl` is a tiny macOS CLI that searches Apple's public music catalog or reads a local Music.app playlist, then downloads matching audio through `spotdl`.
+`appldl` is a macOS CLI that searches Apple's public music catalog or reads a local Music.app playlist, then downloads matching audio through `spotdl`.
 
 ## What it does
 
@@ -12,22 +12,28 @@
 ## Requirements
 
 - macOS
-- `spotdl`
 - `ffmpeg`
 - `python3`
+- `spotdl`
 - `osascript` access to Music.app for `--playlist` mode
 
-## Install locally
+## Install with Homebrew
+
+```bash
+brew tap sebidc/tools
+brew install appldl
+```
+
+This installs the `appldl` command. `ffmpeg` is handled by the formula.
+
+## Install manually
+
+If you do not want to use Homebrew:
 
 ```bash
 pipx install spotdl
 brew install ffmpeg
 install -m 755 appldl ~/.local/bin/appldl
-```
-
-If `~/.local/bin` is not on your `PATH`:
-
-```bash
 pipx ensurepath
 source ~/.zshrc
 ```
@@ -65,11 +71,11 @@ appldl --help
 
 `appldl` does not download directly from Apple Music. It uses Apple's public search API to find catalog metadata, then passes track queries like `Artist - Title` to `spotdl`, which fetches matching audio from its configured providers.
 
-## Homebrew
+## Homebrew repo layout
 
-A tap-ready formula template is included at [Formula/appldl.rb](/Users/sebi/Documents/New%20project%202/Formula/appldl.rb).
-
-After creating a GitHub release tarball, update the `url` and `sha256`, then publish it in your tap repo.
+- App repo: [sebidc/appldl](https://github.com/sebidc/appldl)
+- Tap repo: `sebidc/homebrew-tools`
+- Formula path inside tap: `Formula/appldl.rb`
 
 ## Notes
 
