@@ -1,0 +1,528 @@
+#!/bin/zsh
+
+set -euo pipefail
+
+SPOTDL_BIN="${SPOTDL_BIN:-$HOME/.local/bin/spotdl}"
+DEFAULT_OUTPUT_DIR="${HOME}/Music/Downloads"
+APPLE_STOREFRONT="${APPLE_STOREFRONT:-US}"
+
+mode="search"
+playlist_name=""
+search_query=""
+search_type="all"
+search_limit=20
+selection=""
+output_dir="$DEFAULT_OUTPUT_DIR"
+queries_file=""
+export_only=0
+
+usage() {
+  cat <<'EOF'
+appldl: Search Apple music catalog or export a local Music playlist and download matches with spotdl
+
+Usage:
+  appldl --playlist "Playlist Name" [options]
+  appldl search "query" [options]
+  appldl "query" [options]
+
+Modes:
+  --playlist NAME       Export tracks from a Music playlist and download them
+  search "query"        Search Apple's public music catalog for songs, albums, and artists
+  "query"               Shortcut for search mode
+
+Options:
+  --type TYPE           Search type: tracks, albums, artists, all
+  --limit N             Max search results to show in search mode
+  --select N            Pick a search result without prompting
+  --storefront CODE     Apple storefront country code, e.g. US, GB, PH
+  --output-dir DIR      Download directory for spotdl output
+  --queries-file FILE   Save generated search queries to this file
+  --export-only         Export queries only; do not run spotdl
+  --help                Show this help
+
+Examples:
+  appldl --playlist "Favorites"
+  appldl "michael jackson"
+  appldl search "thriller" --type albums
+  appldl "road trip" --select 2 --output-dir "$HOME/Music/AppleMusic"
+EOF
+}
+
+sanitize_name() {
+  local value="$1"
+  value="${value//\//-}"
+  value="${value//:/-}"
+  value="${value// /_}"
+  printf '%s' "$value"
+}
+
+ensure_spotdl() {
+  if [[ ! -x "$SPOTDL_BIN" ]]; then
+    echo "spotdl not found at $SPOTDL_BIN" >&2
+    echo "Install spotdl first or set SPOTDL_BIN." >&2
+    exit 1
+  fi
+}
+
+write_clean_queries() {
+  local source_file="$1"
+  local target_file="$2"
+  perl -0pi -e 's/\r/\n/g' "$source_file"
+  grep -v '^[[:space:]]*$' "$source_file" > "$target_file" || true
+}
+
+export_playlist_queries() {
+  local name="$1"
+  local destination="$2"
+  local tmp_file
+  tmp_file="$(mktemp)"
+
+  osascript - "$name" <<'APPLESCRIPT' > "$tmp_file"
+on clean_text(input_text)
+  set t to input_text as text
+  set AppleScript's text item delimiters to return
+  set t to text items of t
+  set AppleScript's text item delimiters to space
+  set t to t as text
+  set AppleScript's text item delimiters to tab
+  set t to text items of t
+  set AppleScript's text item delimiters to space
+  return t as text
+end clean_text
+
+on run argv
+  if (count of argv) is 0 then error "Playlist name is required."
+  set playlist_name to item 1 of argv
+
+  tell application "Music"
+    if not (exists playlist playlist_name) then error "Playlist not found: " & playlist_name
+    set target_playlist to playlist playlist_name
+    set output_lines to {}
+
+    repeat with current_track in tracks of target_playlist
+      set track_name to my clean_text(name of current_track)
+      set artist_name to ""
+
+      try
+        set artist_name to my clean_text(artist of current_track)
+      end try
+
+      if artist_name is "" then
+        try
+          set artist_name to my clean_text(album artist of current_track)
+        end try
+      end if
+
+      if artist_name is "" then set artist_name to "Unknown Artist"
+      if track_name is "" then set track_name to "Unknown Title"
+      set end of output_lines to artist_name & " - " & track_name
+    end repeat
+  end tell
+
+  set AppleScript's text item delimiters to linefeed
+  return output_lines as text
+end run
+APPLESCRIPT
+
+  write_clean_queries "$tmp_file" "$destination"
+  rm -f "$tmp_file"
+}
+
+export_album_queries() {
+  local artist_name="$1"
+  local album_name="$2"
+  local destination="$3"
+  local tmp_file
+  tmp_file="$(mktemp)"
+
+  osascript - "$artist_name" "$album_name" <<'APPLESCRIPT' > "$tmp_file"
+on clean_text(input_text)
+  set t to input_text as text
+  set AppleScript's text item delimiters to return
+  set t to text items of t
+  set AppleScript's text item delimiters to space
+  set t to t as text
+  set AppleScript's text item delimiters to tab
+  set t to text items of t
+  set AppleScript's text item delimiters to space
+  return t as text
+end clean_text
+
+on run argv
+  if (count of argv) is less than 2 then error "Artist and album are required."
+  set wanted_artist to item 1 of argv
+  set wanted_album to item 2 of argv
+
+  tell application "Music"
+    set output_lines to {}
+    repeat with current_track in tracks of library playlist 1
+      set current_album to ""
+      set current_artist to ""
+      set track_name to ""
+
+      try
+        set current_album to my clean_text(album of current_track)
+      end try
+
+      try
+        set current_artist to my clean_text(album artist of current_track)
+      end try
+
+      if current_artist is "" then
+        try
+          set current_artist to my clean_text(artist of current_track)
+        end try
+      end if
+
+      try
+        set track_name to my clean_text(name of current_track)
+      end try
+
+      if current_album is wanted_album and current_artist is wanted_artist then
+        if current_artist is "" then set current_artist to "Unknown Artist"
+        if track_name is "" then set track_name to "Unknown Title"
+        set end of output_lines to current_artist & " - " & track_name
+      end if
+    end repeat
+  end tell
+
+  set AppleScript's text item delimiters to linefeed
+  return output_lines as text
+end run
+APPLESCRIPT
+
+  write_clean_queries "$tmp_file" "$destination"
+  rm -f "$tmp_file"
+}
+
+search_catalog() {
+  local query="$1"
+  local type="$2"
+  local limit="$3"
+  local storefront="$4"
+  local destination="$5"
+
+  python3 - "$query" "$type" "$limit" "$storefront" > "$destination" <<'PYTHON'
+import json
+import sys
+import urllib.parse
+import urllib.request
+
+query, wanted_type, limit_str, storefront = sys.argv[1:5]
+limit = int(limit_str)
+
+entity_map = {
+    "tracks": "song",
+    "albums": "album",
+    "artists": "musicArtist",
+    "all": "allArtist,album,song",
+}
+
+params = {
+    "term": query,
+    "media": "music",
+    "entity": entity_map[wanted_type],
+    "limit": str(limit),
+    "country": storefront,
+}
+url = "https://itunes.apple.com/search?" + urllib.parse.urlencode(params)
+
+with urllib.request.urlopen(url, timeout=20) as response:
+    payload = json.load(response)
+
+seen = set()
+for item in payload.get("results", []):
+    wrapper = item.get("wrapperType")
+    kind = item.get("kind")
+
+    if wrapper == "track" and kind == "song":
+        artist = item.get("artistName", "Unknown Artist")
+        track = item.get("trackName", "Unknown Title")
+        album = item.get("collectionName", "")
+        label = f"{artist} - {track}"
+        if album:
+            label += f" ({album})"
+        payload_value = f"{artist} - {track}"
+        row = ("track", label, payload_value)
+    elif wrapper == "collection" and item.get("collectionType") == "Album":
+        artist = item.get("artistName", "Unknown Artist")
+        album = item.get("collectionName", "Unknown Album")
+        collection_id = str(item.get("collectionId", ""))
+        label = f"{artist} - {album}"
+        payload_value = f"{artist}|||{album}|||{collection_id}"
+        row = ("album", label, payload_value)
+    elif wrapper == "artist":
+        artist = item.get("artistName", "Unknown Artist")
+        artist_id = str(item.get("artistId", ""))
+        row = ("artist", artist, f"{artist}|||{artist_id}")
+    else:
+        continue
+
+    if row in seen:
+        continue
+    seen.add(row)
+    print("\t".join(row))
+PYTHON
+}
+
+export_album_queries_from_lookup() {
+  local collection_id="$1"
+  local fallback_artist="$2"
+  local fallback_album="$3"
+  local storefront="$4"
+  local destination="$5"
+
+  python3 - "$collection_id" "$fallback_artist" "$fallback_album" "$storefront" > "$destination" <<'PYTHON'
+import json
+import sys
+import urllib.parse
+import urllib.request
+
+collection_id, fallback_artist, fallback_album, storefront = sys.argv[1:5]
+params = {
+    "id": collection_id,
+    "entity": "song",
+    "country": storefront,
+}
+url = "https://itunes.apple.com/lookup?" + urllib.parse.urlencode(params)
+
+with urllib.request.urlopen(url, timeout=20) as response:
+    payload = json.load(response)
+
+results = payload.get("results", [])
+printed = False
+for item in results:
+    if item.get("wrapperType") != "track" or item.get("kind") != "song":
+        continue
+    artist = item.get("artistName") or fallback_artist or "Unknown Artist"
+    track = item.get("trackName", "Unknown Title")
+    print(f"{artist} - {track}")
+    printed = True
+
+if not printed and fallback_artist and fallback_album:
+    print(f"{fallback_artist} - {fallback_album}")
+PYTHON
+}
+
+export_artist_queries_from_search() {
+  local artist_name="$1"
+  local limit="$2"
+  local storefront="$3"
+  local destination="$4"
+
+  python3 - "$artist_name" "$limit" "$storefront" > "$destination" <<'PYTHON'
+import json
+import sys
+import urllib.parse
+import urllib.request
+
+artist_name, limit_str, storefront = sys.argv[1:4]
+limit = int(limit_str)
+
+params = {
+    "term": artist_name,
+    "media": "music",
+    "entity": "song",
+    "attribute": "artistTerm",
+    "limit": str(limit),
+    "country": storefront,
+}
+url = "https://itunes.apple.com/search?" + urllib.parse.urlencode(params)
+
+with urllib.request.urlopen(url, timeout=20) as response:
+    payload = json.load(response)
+
+seen = set()
+for item in payload.get("results", []):
+    artist = item.get("artistName", artist_name)
+    track = item.get("trackName")
+    if not track:
+        continue
+    query = f"{artist} - {track}"
+    if query in seen:
+        continue
+    seen.add(query)
+    print(query)
+PYTHON
+}
+
+run_downloads() {
+  local source_queries="$1"
+  ensure_spotdl
+  mkdir -p "$output_dir"
+
+  while IFS= read -r query; do
+    [[ -z "$query" ]] && continue
+    echo "Downloading: $query"
+    "$SPOTDL_BIN" download "$query" --output "$output_dir/{artist} - {title}.{output-ext}"
+  done < "$source_queries"
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    search)
+      mode="search"
+      if [[ $# -lt 2 ]]; then
+        echo "search requires a query." >&2
+        exit 1
+      fi
+      search_query="$2"
+      shift 2
+      ;;
+    --playlist)
+      mode="playlist"
+      playlist_name="${2:-}"
+      shift 2
+      ;;
+    --type)
+      search_type="${2:-}"
+      shift 2
+      ;;
+    --limit)
+      search_limit="${2:-}"
+      shift 2
+      ;;
+    --select)
+      selection="${2:-}"
+      shift 2
+      ;;
+    --output-dir)
+      output_dir="${2:-}"
+      shift 2
+      ;;
+    --queries-file)
+      queries_file="${2:-}"
+      shift 2
+      ;;
+    --export-only)
+      export_only=1
+      shift
+      ;;
+    --help|-h)
+      usage
+      exit 0
+      ;;
+    *)
+      if [[ -z "$search_query" && "$mode" == "search" ]]; then
+        search_query="$1"
+        shift
+      else
+        echo "Unknown argument: $1" >&2
+        echo >&2
+        usage >&2
+        exit 1
+      fi
+      ;;
+  esac
+done
+
+case "$search_type" in
+  tracks|albums|artists|all) ;;
+  *)
+    echo "Invalid --type value: $search_type" >&2
+    exit 1
+    ;;
+esac
+
+if [[ "$mode" == "playlist" ]]; then
+  if [[ -z "$playlist_name" ]]; then
+    echo "--playlist is required." >&2
+    exit 1
+  fi
+
+  if [[ -z "$queries_file" ]]; then
+    queries_file="${PWD}/$(sanitize_name "$playlist_name").spotdl.txt"
+  fi
+
+  mkdir -p "$(dirname "$queries_file")"
+  export_playlist_queries "$playlist_name" "$queries_file"
+
+  count="$(wc -l < "$queries_file" | tr -d ' ')"
+  echo "Exported $count track queries to $queries_file"
+
+  if [[ "$export_only" -eq 1 ]]; then
+    echo "Export only requested. No downloads started."
+    exit 0
+  fi
+
+  run_downloads "$queries_file"
+  exit 0
+fi
+
+if [[ -z "$search_query" ]]; then
+  usage >&2
+  exit 1
+fi
+
+results_file="$(mktemp)"
+trap 'rm -f "$results_file"' EXIT
+search_catalog "$search_query" "$search_type" "$search_limit" "$APPLE_STOREFRONT" "$results_file"
+write_clean_queries "$results_file" "$results_file.clean"
+mv "$results_file.clean" "$results_file"
+
+if [[ ! -s "$results_file" ]]; then
+  echo "No results found for: $search_query"
+  exit 1
+fi
+
+result_count=0
+while IFS=$'\t' read -r result_kind result_label result_payload; do
+  result_count=$((result_count + 1))
+  printf '%2d. [%s] %s\n' "$result_count" "$result_kind" "$result_label"
+done < "$results_file"
+
+if [[ -z "$selection" ]]; then
+  printf 'Choose a result number to download (or q to quit): '
+  read -r selection
+fi
+
+if [[ "$selection" == "q" || "$selection" == "Q" ]]; then
+  echo "Cancelled."
+  exit 0
+fi
+
+if ! [[ "$selection" =~ ^[0-9]+$ ]] || (( selection < 1 || selection > result_count )); then
+  echo "Invalid selection: $selection" >&2
+  exit 1
+fi
+
+chosen_line="$(sed -n "${selection}p" "$results_file")"
+chosen_kind="$(printf '%s' "$chosen_line" | cut -f1)"
+chosen_label="$(printf '%s' "$chosen_line" | cut -f2)"
+chosen_payload="$(printf '%s' "$chosen_line" | cut -f3)"
+
+if [[ -z "$queries_file" ]]; then
+  queries_file="${PWD}/$(sanitize_name "$chosen_label").spotdl.txt"
+fi
+mkdir -p "$(dirname "$queries_file")"
+
+case "$chosen_kind" in
+  track)
+    printf '%s\n' "$chosen_payload" > "$queries_file"
+    ;;
+  album)
+    album_artist="${chosen_payload%%|||*}"
+    album_rest="${chosen_payload#*|||}"
+    album_name="${album_rest%%|||*}"
+    collection_id="${chosen_payload##*|||}"
+    export_album_queries_from_lookup "$collection_id" "$album_artist" "$album_name" "$APPLE_STOREFRONT" "$queries_file"
+    ;;
+  artist)
+    artist_name="${chosen_payload%%|||*}"
+    export_artist_queries_from_search "$artist_name" "$search_limit" "$APPLE_STOREFRONT" "$queries_file"
+    ;;
+  *)
+    echo "Unsupported result type: $chosen_kind" >&2
+    exit 1
+    ;;
+esac
+
+count="$(wc -l < "$queries_file" | tr -d ' ')"
+echo "Prepared $count track quer$( [[ "$count" == "1" ]] && printf 'y' || printf 'ies' ) in $queries_file"
+
+if [[ "$export_only" -eq 1 ]]; then
+  echo "Export only requested. No downloads started."
+  exit 0
+fi
+
+run_downloads "$queries_file"
