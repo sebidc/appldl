@@ -1,5 +1,10 @@
 # appldl
 
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+[![Release](https://img.shields.io/github/v/release/sebidc/check-installs-tui?display_name=tag)](https://github.com/sebidc/appldl/releases)
+[![Platform](https://img.shields.io/badge/platform-macOS%20Terminal-111827)](https://github.com/sebidc/appldl)
+[![Homebrew Tap](https://img.shields.io/badge/homebrew-sebidc%2Ftap-fbbf24)](https://github.com/sebidc/homebrew-tap)
+
 `appldl` is a macOS CLI that searches Apple's public music catalog or reads a local Music.app playlist, then downloads matching audio through `spotdl`.
 
 ## What it does
