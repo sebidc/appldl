@@ -20,7 +20,7 @@
 ## Install with Homebrew
 
 ```bash
-brew tap sebidc/tools
+brew tap sebidc/tap
 brew install appldl
 ```
 
@@ -74,7 +74,7 @@ appldl --help
 ## Homebrew repo layout
 
 - App repo: [sebidc/appldl](https://github.com/sebidc/appldl)
-- Tap repo: `sebidc/homebrew-tools`
+- Tap repo: `sebidc/homebrew-tap`
 - Formula path inside tap: `Formula/appldl.rb`
 
 ## Notes

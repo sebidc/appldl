@@ -43,13 +43,13 @@ Copy the first field from the `shasum` output and place it in `Formula/appldl.rb
 Tap repo:
 
 ```text
-https://github.com/sebidc/homebrew-tools
+https://github.com/sebidc/homebrew-tap
 ```
 
 Homebrew tap name:
 
 ```text
-sebidc/tools
+sebidc/tap
 ```
 
 Place the formula at:
@@ -63,6 +63,6 @@ Then commit and push it to the tap repo.
 ## 6. Install from the tap
 
 ```bash
-brew tap sebidc/tools
+brew tap sebidc/tap
 brew install appldl
 ```
